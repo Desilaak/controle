@@ -1,50 +1,206 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Control de imágenes</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
 body {
-  background: #171717;
-  color: white;
-  font-family: Arial;
-  text-align: center;
-  padding: 30px;
+  background:#171923;
+  color:white;
+  font-family:Arial,sans-serif;
+  text-align:center;
+  padding:25px;
 }
-button, input {
-  padding: 12px;
-  margin: 10px;
-  border-radius: 8px;
+button,input {
+  padding:12px;
+  margin:8px;
+  border-radius:9px;
 }
 button {
-  cursor: pointer;
+  cursor:pointer;
+  border:0;
+  background:#8065ed;
+  color:white;
 }
+.panel {
+  max-width:550px;
+  margin:20px auto;
+  padding:20px;
+  background:#25283a;
+  border-radius:15px;
+}
+#preview {
+  max-width:100%;
+  max-height:65vh;
+  object-fit:contain;
+}
+.hidden {display:none}
+#status {color:#b9b4ff}
 </style>
 </head>
 <body>
 <h1>Control de imágenes</h1>
-<p>Panel de control</p>
-<input type="file" id="foto" accept="image/*">
-<br>
-<button onclick="enviar()">Enviar imagen</button>
-<button onclick="quitar()">Quitar imagen</button>
-<p id="estado">Esperando una imagen</p>
+
+<div class="panel">
+  <h2>¿Qué quieres hacer?</h2>
+  <button onclick="startReceiver()">Recibir imágenes</button>
+  <button onclick="showSender()">Enviar imágenes</button>
+  <p id="status">Sin conexión</p>
+</div>
+
+<div class="panel hidden" id="receiver">
+  <h2>Receptor</h2>
+  <p>Comparte este código con quien te enviará imágenes:</p>
+  <h2 id="myid">Conectando...</h2>
+  <p id="incoming">Esperando conexión...</p>
+  <img id="preview">
+  <button onclick="closeReceiver()">Cerrar receptor</button>
+</div>
+
+<div class="panel hidden" id="sender">
+  <h2>Tu panel de control</h2>
+  <input id="remoteid" placeholder="Código del receptor">
+  <button onclick="connect()">Conectar</button>
+  <hr>
+  <input type="file" id="photo" accept="image/*">
+  <br>
+  <button onclick="sendImage()">Enviar imagen</button>
+  <button onclick="clearImage()">Quitar imagen</button>
+  <p id="sendstatus">Sin conexión</p>
+</div>
 
 <script>
-function enviar() {
-  const archivo = document.getElementById('foto').files[0];
-  if (!archivo) {
-    alert('Selecciona una imagen primero');
-    return;
-  }
-  document.getElementById('estado').textContent =
-    'Imagen seleccionada: ' + archivo.name +
-    '. Todavía falta configurar la conexión con el receptor.';
+let peer;
+let connection;
+let role = "";
+let parts = {};
+let receiverReady = false;
+
+function setStatus(message) {
+  document.getElementById("status").textContent = message;
 }
-function quitar() {
-  document.getElementById('estado').textContent =
-    'Imagen retirada del panel.';
+
+function startReceiver() {
+  role = "receiver";
+  document.getElementById("receiver").classList.remove("hidden");
+  document.getElementById("sender").classList.add("hidden");
+  peer = new Peer();
+
+  peer.on("open", id => {
+    document.getElementById("myid").textContent = id;
+    setStatus("Receptor preparado");
+  });
+
+  peer.on("connection", conn => {
+    document.getElementById("incoming").textContent =
+      "Solicitud de conexión de " + conn.peer;
+    if (!confirm("¿Aceptar conexión para recibir imágenes?")) {
+      conn.close();
+      return;
+    }
+    connection = conn;
+    conn.on("data", receiveData);
+    conn.on("open", () => {
+      document.getElementById("incoming").textContent =
+        "Conectado. Esperando imágenes.";
+      receiverReady = true;
+    });
+    conn.on("close", () => {
+      receiverReady = false;
+      document.getElementById("incoming").textContent =
+        "Conexión cerrada";
+    });
+  });
+
+  peer.on("error", e => setStatus("Error: " + e.type));
+}
+
+function showSender() {
+  role = "sender";
+  document.getElementById("sender").classList.remove("hidden");
+  document.getElementById("receiver").classList.add("hidden");
+}
+
+function connect() {
+  const id = document.getElementById("remoteid").value.trim();
+  if (!id) return alert("Introduce el código del receptor");
+
+  peer = new Peer();
+
+  peer.on("open", () => {
+    connection = peer.connect(id);
+    connection.on("open", () => {
+      document.getElementById("sendstatus").textContent =
+        "¡Conectado!";
+    });
+    connection.on("close", () => {
+      document.getElementById("sendstatus").textContent =
+        "Conexión cerrada";
+    });
+    connection.on("error", () => {
+      document.getElementById("sendstatus").textContent =
+        "Error de conexión";
+    });
+  });
+
+  peer.on("error", e => {
+    document.getElementById("sendstatus").textContent =
+      "Error: " + e.type;
+  });
+}
+
+function sendImage() {
+  const file = document.getElementById("photo").files[0];
+  if (!file || !connection || !connection.open)
+    return alert("Selecciona una imagen y conecta primero");
+
+  if (file.size > 2 * 1024 * 1024)
+    return alert("Elige una imagen de menos de 2 MB");
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    connection.send({
+      type:"image",
+      name:file.name,
+      data:reader.result
+    });
+    document.getElementById("sendstatus").textContent =
+      "Imagen enviada";
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearImage() {
+  if (!connection || !connection.open)
+    return alert("No hay conexión");
+  connection.send({type:"clear"});
+}
+
+function receiveData(data) {
+  if (data.type === "image") {
+    const img = document.getElementById("preview");
+    img.src = data.data;
+    img.alt = data.name;
+    document.getElementById("incoming").textContent =
+      "Imagen recibida: " + data.name;
+  }
+  if (data.type === "clear") {
+    document.getElementById("preview").removeAttribute("src");
+    document.getElementById("incoming").textContent =
+      "Imagen retirada por el remitente";
+  }
+}
+
+function closeReceiver() {
+  if (connection) connection.close();
+  if (peer) peer.destroy();
+  document.getElementById("preview").removeAttribute("src");
+  document.getElementById("incoming").textContent =
+    "Receptor cerrado";
+  setStatus("Sin conexión");
 }
 </script>
 </body>
