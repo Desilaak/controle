@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de imágenes</title>
+<style>
+body {
+  background: #171717;
+  color: white;
+  font-family: Arial;
+  text-align: center;
+  padding: 30px;
+}
+button, input {
+  padding: 12px;
+  margin: 10px;
+  border-radius: 8px;
+}
+button {
+  cursor: pointer;
+}
+</style>
+</head>
+<body>
+<h1>Control de imágenes</h1>
+<p>Panel de control</p>
+<input type="file" id="foto" accept="image/*">
+<br>
+<button onclick="enviar()">Enviar imagen</button>
+<button onclick="quitar()">Quitar imagen</button>
+<p id="estado">Esperando una imagen</p>
+
+<script>
+function enviar() {
+  const archivo = document.getElementById('foto').files[0];
+  if (!archivo) {
+    alert('Selecciona una imagen primero');
+    return;
+  }
+  document.getElementById('estado').textContent =
+    'Imagen seleccionada: ' + archivo.name +
+    '. Todavía falta configurar la conexión con el receptor.';
+}
+function quitar() {
+  document.getElementById('estado').textContent =
+    'Imagen retirada del panel.';
+}
+</script>
+</body>
+</html>
