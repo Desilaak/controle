@@ -254,18 +254,32 @@ function connect() {
     $("sendstatus").textContent = "Error: " + e.type;
   });
 }
+  
+let pastedImage = null;
 
+document.addEventListener("paste", (event) => {
+  const items = event.clipboardData.items;
+
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      pastedImage = item.getAsFile();
+      $("sendstatus").textContent = "Imagen copiada. Pulsa Enviar.";
+      return;
+    }
+  }
+});
+  
 function sendImage() {
-  const file = $("photo").files[0];
+  const file = $("photo").files[0] || pastedImage;
 
   if (!file || !connection || !connection.open)
-    return alert("Selecciona una imagen y conecta primero");
+    return alert("Copia o selecciona una imagen y conecta primero");
 
   if (file.size > 2 * 1024 * 1024)
     return alert("La imagen debe ocupar menos de 2 MB");
 
   if (!file.type.startsWith("image/"))
-    return alert("Selecciona un archivo de imagen");
+    return alert("Selecciona una imagen");
 
   const reader = new FileReader();
 
@@ -276,18 +290,19 @@ function sendImage() {
     updatePreview();
 
     connection.send({
-      type:"image",
-      data:currentImage,
-      name:file.name,
-      state:getState()
+      type: "image",
+      data: currentImage,
+      name: file.name || "imagen-copiada",
+      state: getState()
     });
 
     $("sendstatus").textContent = "Imagen enviada";
+    pastedImage = null;
   };
 
   reader.readAsDataURL(file);
 }
-
+  
 function clearImage() {
   if (!connection || !connection.open)
     return alert("No hay conexión");
