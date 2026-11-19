@@ -6,202 +6,335 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Control de imágenes</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
 <style>
+* { box-sizing: border-box; }
+
 body {
   background:#171923;
   color:white;
   font-family:Arial,sans-serif;
   text-align:center;
-  padding:25px;
+  padding:20px;
 }
+
+.panel {
+  max-width:600px;
+  margin:18px auto;
+  padding:20px;
+  background:#25283a;
+  border-radius:15px;
+}
+
 button,input {
-  padding:12px;
-  margin:8px;
-  border-radius:9px;
+  padding:11px;
+  margin:7px;
+  border-radius:8px;
 }
+
 button {
   cursor:pointer;
   border:0;
   background:#8065ed;
   color:white;
 }
-.panel {
-  max-width:550px;
-  margin:20px auto;
-  padding:20px;
-  background:#25283a;
-  border-radius:15px;
+
+input[type=range] { width:85%; }
+
+.hidden { display:none; }
+
+#previewArea {
+  height:250px;
+  background:#111;
+  border:1px solid #555;
+  position:relative;
+  overflow:hidden;
+  margin:15px 0;
 }
+
 #preview {
-  max-width:100%;
-  max-height:65vh;
-  object-fit:contain;
+  position:absolute;
+  max-width:none;
+  max-height:none;
+  transform:translate(-50%,-50%);
+  pointer-events:none;
 }
-.hidden {display:none}
-#status {color:#b9b4ff}
+
+#screen {
+  position:fixed;
+  inset:0;
+  background:#111;
+  overflow:hidden;
+  z-index:10;
+}
+
+#screen img {
+  position:absolute;
+  max-width:none;
+  max-height:none;
+  transform:translate(-50%,-50%);
+}
+
+#screenClose {
+  position:fixed;
+  right:12px;
+  top:12px;
+  z-index:20;
+}
+label { display:block; margin-top:14px; }
 </style>
 </head>
+
 <body>
-<h1>Control de imágenes</h1>
+
+<h1>CONTROL DE IMÁGENES</h1>
 
 <div class="panel">
-  <h2>¿Qué quieres hacer?</h2>
-  <button onclick="startReceiver()">Recibir imágenes</button>
-  <button onclick="showSender()">Enviar imágenes</button>
+  <button onclick="startReceiver()">RECIBIR IMÁGENES</button>
+  <button onclick="showSender()">ENVIAR IMÁGENES</button>
   <p id="status">Sin conexión</p>
 </div>
 
 <div class="panel hidden" id="receiver">
-  <h2>Receptor</h2>
-  <p>Comparte este código con quien te enviará imágenes:</p>
+  <h2>RECEPTOR</h2>
+  <p>Comparte este código con el remitente:</p>
   <h2 id="myid">Conectando...</h2>
   <p id="incoming">Esperando conexión...</p>
-  <img id="preview">
   <button onclick="closeReceiver()">Cerrar receptor</button>
 </div>
 
 <div class="panel hidden" id="sender">
-  <h2>Tu panel de control</h2>
-  <input id="remoteid" placeholder="Código del receptor">
-  <button onclick="connect()">Conectar</button>
+  <h2>TU PANEL DE CONTROL</h2>
+
+  <input id="remoteid" placeholder="Código de tu amigo">
+  <br>
+  <button onclick="connect()">CONECTAR</button>
+
   <hr>
+
   <input type="file" id="photo" accept="image/*">
   <br>
-  <button onclick="sendImage()">Enviar imagen</button>
-  <button onclick="clearImage()">Quitar imagen</button>
+  <button onclick="sendImage()">ENVIAR FOTO</button>
+  <button onclick="clearImage()">QUITAR FOTO</button>
+
+  <div id="previewArea">
+    <img id="preview">
+  </div>
+
+  <label>Posición horizontal</label>
+  <input id="x" type="range" min="0" max="100" value="50">
+
+  <label>Posición vertical</label>
+  <input id="y" type="range" min="0" max="100" value="50">
+
+  <label>Tamaño</label>
+  <input id="size" type="range" min="5" max="100" value="35">
+
+  <label>Rotación</label>
+  <input id="rotation" type="range" min="0" max="360" value="0">
+
   <p id="sendstatus">Sin conexión</p>
 </div>
 
 <script>
-let peer;
-let connection;
-let role = "";
-let parts = {};
-let receiverReady = false;
+let peer = null;
+let connection = null;
+let currentImage = null;
+let isReceiver = false;
 
-function setStatus(message) {
-  document.getElementById("status").textContent = message;
+const $ = id => document.getElementById(id);
+
+function showStatus(text) {
+  $("status").textContent = text;
 }
 
+function getState() {
+  return {
+    x: Number($("x").value),
+    y: Number($("y").value),
+    size: Number($("size").value),
+    rotation: Number($("rotation").value)
+  };
+}
+
+function applyStyle(img, state, width, height) {
+  img.style.left = state.x + "%";
+  img.style.top = state.y + "%";
+  img.style.width = state.size + "%";
+  img.style.height = "auto";
+  img.style.transform =
+    "translate(-50%,-50%) rotate(" + state.rotation + "deg)";
+}
+
+function updatePreview() {
+  const state = getState();
+  if (currentImage) {
+    applyStyle($("preview"), state);
+  }
+}
+
+function sendState() {
+  updatePreview();
+
+  if (connection && connection.open && currentImage) {
+    connection.send({
+      type:"position",
+      state:getState()
+    });
+  }
+}
+
+["x","y","size","rotation"].forEach(id => {
+  $(id).addEventListener("input",sendState);
+});
+
 function startReceiver() {
-  role = "receiver";
-  document.getElementById("receiver").classList.remove("hidden");
-  document.getElementById("sender").classList.add("hidden");
+  if (peer) peer.destroy();
+
+  isReceiver = true;
+  $("receiver").classList.remove("hidden");
+  $("sender").classList.add("hidden");
+
   peer = new Peer();
 
   peer.on("open", id => {
-    document.getElementById("myid").textContent = id;
-    setStatus("Receptor preparado");
+    $("myid").textContent = id;
+    showStatus("Receptor preparado");
   });
 
   peer.on("connection", conn => {
-    document.getElementById("incoming").textContent =
-      "Solicitud de conexión de " + conn.peer;
     if (!confirm("¿Aceptar conexión para recibir imágenes?")) {
       conn.close();
       return;
     }
+
     connection = conn;
-    conn.on("data", receiveData);
+
     conn.on("open", () => {
-      document.getElementById("incoming").textContent =
-        "Conectado. Esperando imágenes.";
-      receiverReady = true;
+      $("incoming").textContent = "Conectado";
     });
+
+    conn.on("data", receiveData);
+
     conn.on("close", () => {
-      receiverReady = false;
-      document.getElementById("incoming").textContent =
-        "Conexión cerrada";
+      $("incoming").textContent = "Conexión cerrada";
+      $("screen").classList.add("hidden");
     });
   });
 
-  peer.on("error", e => setStatus("Error: " + e.type));
+  peer.on("error", e => showStatus("Error: " + e.type));
 }
 
 function showSender() {
-  role = "sender";
-  document.getElementById("sender").classList.remove("hidden");
-  document.getElementById("receiver").classList.add("hidden");
+  $("sender").classList.remove("hidden");
+  $("receiver").classList.add("hidden");
 }
 
 function connect() {
-  const id = document.getElementById("remoteid").value.trim();
-  if (!id) return alert("Introduce el código del receptor");
+  if (peer) peer.destroy();
+
+  const id = $("remoteid").value.trim();
+  if (!id) return alert("Introduce el código");
 
   peer = new Peer();
 
   peer.on("open", () => {
     connection = peer.connect(id);
+
     connection.on("open", () => {
-      document.getElementById("sendstatus").textContent =
-        "¡Conectado!";
+      $("sendstatus").textContent = "Conectado";
     });
+
     connection.on("close", () => {
-      document.getElementById("sendstatus").textContent =
-        "Conexión cerrada";
-    });
-    connection.on("error", () => {
-      document.getElementById("sendstatus").textContent =
-        "Error de conexión";
+      $("sendstatus").textContent = "Desconectado";
     });
   });
 
   peer.on("error", e => {
-    document.getElementById("sendstatus").textContent =
-      "Error: " + e.type;
+    $("sendstatus").textContent = "Error: " + e.type;
   });
 }
 
 function sendImage() {
-  const file = document.getElementById("photo").files[0];
+  const file = $("photo").files[0];
+
   if (!file || !connection || !connection.open)
     return alert("Selecciona una imagen y conecta primero");
 
   if (file.size > 2 * 1024 * 1024)
-    return alert("Elige una imagen de menos de 2 MB");
+    return alert("La imagen debe ocupar menos de 2 MB");
+
+  if (!file.type.startsWith("image/"))
+    return alert("Selecciona un archivo de imagen");
 
   const reader = new FileReader();
+
   reader.onload = () => {
+    currentImage = reader.result;
+
+    $("preview").src = currentImage;
+    updatePreview();
+
     connection.send({
       type:"image",
+      data:currentImage,
       name:file.name,
-      data:reader.result
+      state:getState()
     });
-    document.getElementById("sendstatus").textContent =
-      "Imagen enviada";
+
+    $("sendstatus").textContent = "Imagen enviada";
   };
+
   reader.readAsDataURL(file);
 }
 
 function clearImage() {
   if (!connection || !connection.open)
     return alert("No hay conexión");
+
   connection.send({type:"clear"});
+  currentImage = null;
+  $("preview").removeAttribute("src");
+  $("sendstatus").textContent = "Imagen retirada";
 }
 
 function receiveData(data) {
   if (data.type === "image") {
-    const img = document.getElementById("preview");
-    img.src = data.data;
-    img.alt = data.name;
-    document.getElementById("incoming").textContent =
-      "Imagen recibida: " + data.name;
+    $("screen").classList.remove("hidden");
+    $("screenImage").src = data.data;
+    applyStyle($("screenImage"),data.state);
+    $("incoming").textContent = "Imagen recibida: " + data.name;
   }
+
+  if (data.type === "position") {
+    applyStyle($("screenImage"),data.state);
+  }
+
   if (data.type === "clear") {
-    document.getElementById("preview").removeAttribute("src");
-    document.getElementById("incoming").textContent =
-      "Imagen retirada por el remitente";
+    $("screenImage").removeAttribute("src");
+    $("screen").classList.add("hidden");
+    $("incoming").textContent = "Imagen retirada";
   }
 }
 
 function closeReceiver() {
   if (connection) connection.close();
   if (peer) peer.destroy();
-  document.getElementById("preview").removeAttribute("src");
-  document.getElementById("incoming").textContent =
-    "Receptor cerrado";
-  setStatus("Sin conexión");
+
+  $("screen").classList.add("hidden");
+  $("receiver").classList.add("hidden");
+  showStatus("Receptor cerrado");
 }
 </script>
+
+<div id="screen" class="hidden">
+  <button id="screenClose" onclick="
+    if(connection) connection.close();
+    if(peer) peer.destroy();
+    this.parentElement.classList.add('hidden');
+  ">Cerrar</button>
+  <img id="screenImage">
+</div>
+
 </body>
 </html>
